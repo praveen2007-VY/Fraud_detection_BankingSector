@@ -1,0 +1,38 @@
+# Flink local config — overrides pyflink defaults for Windows with non-ASCII hostname
+# Forces all network bindings to 127.0.0.1 instead of relying on InetAddress.getLocalHost()
+# which fails when the Windows hostname contains emoji or non-ASCII characters.
+# Also adds Java 17 --add-opens flags required for PyFlink's internal reflection.
+
+jobmanager:
+  rpc:
+    address: 127.0.0.1
+    port: 6123
+  bind-host: 127.0.0.1
+
+taskmanager:
+  host: 127.0.0.1
+  bind-host: 127.0.0.1
+  rpc:
+    port: 0    # 0 = pick a random free port
+
+parallelism:
+  default: 1
+
+rest:
+  address: 127.0.0.1
+  bind-address: 127.0.0.1
+  port: 8081
+
+execution:
+  attached: true
+
+env:
+  java:
+    opts:
+      all: >-
+        --add-opens java.base/java.util=ALL-UNNAMED
+        --add-opens java.base/java.lang=ALL-UNNAMED
+        --add-opens java.base/java.lang.reflect=ALL-UNNAMED
+        --add-opens java.base/java.io=ALL-UNNAMED
+        -Djava.net.preferIPv4Stack=true
+        -Djava.rmi.server.hostname=127.0.0.1
