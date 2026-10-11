@@ -47,15 +47,27 @@ def start_kafka():
     print(f"  Log: {LOG_FILE}")
 
     log_fh = open(LOG_FILE, "w", encoding="utf-8")
-    proc = subprocess.Popen(
-        java_args,
-        stdin=subprocess.DEVNULL,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB,
-        close_fds=True,
-        cwd=KFK_HOME,
-    )
+    flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    try:
+        proc = subprocess.Popen(
+            java_args,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            creationflags=flags | CREATE_BREAKAWAY_FROM_JOB,
+            close_fds=True,
+            cwd=KFK_HOME,
+        )
+    except PermissionError:
+        proc = subprocess.Popen(
+            java_args,
+            stdin=subprocess.DEVNULL,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            creationflags=flags,
+            close_fds=True,
+            cwd=KFK_HOME,
+        )
 
     print(f"  Kafka PID: {proc.pid}")
     print("  Waiting up to 30s for port 9092...")

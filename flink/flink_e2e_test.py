@@ -29,7 +29,9 @@ if hasattr(sys.stderr, "reconfigure"):
 import time
 
 import pandas as pd
+# pyrefly: ignore [missing-import]
 from confluent_kafka import Consumer, KafkaError, KafkaException, Producer
+# pyrefly: ignore [missing-import]
 from confluent_kafka.admin import AdminClient, NewTopic
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -285,6 +287,7 @@ if __name__ == "__main__":
             kafka_log.close()
 
     # ── Report ────────────────────────────────────────────────────────────────
+    # pyrefly: ignore [missing-import]
     import pyflink
     banner("PHASE 3 VERIFICATION REPORT")
     print(f"  1. Flink version           : {pyflink.__version__}")

@@ -17,7 +17,7 @@ KFK_HOME  = r"C:\kfk"
 KFK_LOGS  = r"C:\kfk-logs"
 LOG_FILE  = os.path.join(KFK_LOGS, "kafka-daemon.log")
 BROKER    = "localhost:9092"
-TOPIC     = "transactions"
+TOPIC     = "test_transactions"
 DATA_FILE = os.path.join(os.path.dirname(__file__), "../data/transactions_clean.csv")
 
 java_args = [
