@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Radio, RefreshCw, Server, Database, Cpu } from 'lucide-react';
+import { ShieldCheck, Radio, RefreshCw, Server, Database, Cpu } from 'lucide-react';
 import { HealthResponse } from '../types';
 
 interface NavbarProps {
@@ -32,93 +32,94 @@ export const Navbar: React.FC<NavbarProps> = ({
   const mlHealthy = health?.dependencies?.ml_artifacts?.status === 'healthy';
 
   return (
-    <header className="h-16 bg-[#0E1524] border-b border-[#1E293B] px-6 flex items-center justify-between sticky top-0 z-30">
+    <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs">
       <div className="flex items-center gap-3">
-        <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-          <Shield className="w-5 h-5 text-white" />
+        <div className="h-9 w-9 rounded-2xl bg-[#05C168] flex items-center justify-center shadow-md shadow-emerald-500/20 text-white">
+          <ShieldCheck className="w-5 h-5 stroke-[2.5]" />
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-bold text-white tracking-tight">EGIS-SENTINEL</h1>
-            <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
-              v1.0 Real-Time
+            <h1 className="text-sm font-extrabold text-slate-800 tracking-tight">
+              EGIS-SENTINEL
+            </h1>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#05C168] border border-emerald-200">
+              v1.0 Stream
             </span>
           </div>
-          <p className="text-xs text-slate-400">Enterprise Financial Fraud & Anomaly Intelligence</p>
+          <p className="text-[11px] text-slate-400 font-medium">Enterprise Real-Time Fraud & Anomaly Intelligence</p>
         </div>
       </div>
 
-      <div className="flex items-center gap-5">
+      <div className="flex items-center gap-4">
         {/* Status Pills */}
         <div className="hidden lg:flex items-center gap-2 text-xs">
-          {/* WebSocket status */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#151D2E] border border-[#232F46]">
+          {/* WebSocket stream status */}
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80">
             <Radio className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400">Stream:</span>
-            <span className="flex items-center gap-1 font-medium">
+            <span className="text-slate-500 font-medium">Stream:</span>
+            <span className="flex items-center gap-1 font-bold">
               <span
                 className={`status-pulse ${
                   wsStatus === 'connected' ? 'online' : wsStatus === 'connecting' ? 'degraded' : 'offline'
                 }`}
               />
-              <span className={wsStatus === 'connected' ? 'text-emerald-400' : 'text-amber-400'}>
+              <span className={wsStatus === 'connected' ? 'text-[#05C168]' : 'text-amber-500'}>
                 {wsStatus === 'connected' ? 'LIVE' : wsStatus.toUpperCase()}
               </span>
             </span>
           </div>
 
           {/* Kafka status */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#151D2E] border border-[#232F46]">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80">
             <Server className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400">Kafka:</span>
-            <span className="flex items-center gap-1 font-medium">
+            <span className="text-slate-500 font-medium">Kafka:</span>
+            <span className="flex items-center gap-1 font-bold">
               <span className={`status-pulse ${kafkaHealthy ? 'online' : 'offline'}`} />
-              <span className={kafkaHealthy ? 'text-emerald-400' : 'text-rose-400'}>
+              <span className={kafkaHealthy ? 'text-[#05C168]' : 'text-rose-500'}>
                 {kafkaHealthy ? 'READY' : 'OFFLINE'}
               </span>
             </span>
           </div>
 
           {/* Neo4j status */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#151D2E] border border-[#232F46]">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80">
             <Database className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400">Neo4j:</span>
-            <span className="flex items-center gap-1 font-medium">
+            <span className="text-slate-500 font-medium">Neo4j:</span>
+            <span className="flex items-center gap-1 font-bold">
               <span className={`status-pulse ${neo4jHealthy ? 'online' : 'offline'}`} />
-              <span className={neo4jHealthy ? 'text-emerald-400' : 'text-rose-400'}>
+              <span className={neo4jHealthy ? 'text-[#05C168]' : 'text-rose-500'}>
                 {neo4jHealthy ? 'READY' : 'OFFLINE'}
               </span>
             </span>
           </div>
 
           {/* ML Models */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#151D2E] border border-[#232F46]">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80">
             <Cpu className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-400">C2GAT:</span>
-            <span className="flex items-center gap-1 font-medium">
+            <span className="text-slate-500 font-medium">C2GAT:</span>
+            <span className="flex items-center gap-1 font-bold">
               <span className={`status-pulse ${mlHealthy ? 'online' : 'degraded'}`} />
-              <span className={mlHealthy ? 'text-emerald-400' : 'text-amber-400'}>
-                {mlHealthy ? 'ACTIVE' : 'DEGRADED'}
+              <span className={mlHealthy ? 'text-[#05C168]' : 'text-amber-500'}>
+                {mlHealthy ? 'ACTIVE' : 'CHECK'}
               </span>
             </span>
           </div>
         </div>
 
-        {/* Clock */}
-        <div className="font-mono text-xs text-slate-400 bg-[#151D2E] px-2.5 py-1 rounded border border-[#232F46]">
-          {timeStr}
+        {/* Refresh & Clock */}
+        <div className="flex items-center gap-2.5">
+          <span className="hidden sm:inline-block text-xs font-mono font-semibold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
+            {timeStr}
+          </span>
+          <button
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors"
+            title="Refresh system state"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#05C168]' : ''}`} />
+          </button>
         </div>
-
-        {/* Refresh button */}
-        <button
-          onClick={onRefresh}
-          disabled={isRefreshing}
-          className="btn btn-secondary text-xs px-2.5 py-1.5"
-          title="Refresh All Dashboard Data"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-cyan-400' : ''}`} />
-          <span className="hidden sm:inline">Refresh</span>
-        </button>
       </div>
     </header>
   );

@@ -164,7 +164,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0B0F19]">
+    <div className="min-h-screen flex flex-col bg-[#F4F5FA] text-slate-800">
       {/* Top Navigation */}
       <Navbar
         health={health}
@@ -183,8 +183,8 @@ export const App: React.FC = () => {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-7xl mx-auto">
+        <main className="flex-1 overflow-y-auto p-6 lg:p-8">
+          <div className="max-w-[1440px] mx-auto">
             {currentTab === 'overview' && (
               <Overview
                 stats={stats}
@@ -193,6 +193,9 @@ export const App: React.FC = () => {
                 health={health}
                 onSelectTransaction={setSelectedTxId}
                 onNavigateToTab={setCurrentTab}
+                wsStatus={wsStatus}
+                onRefresh={loadData}
+                isRefreshing={isRefreshing}
               />
             )}
 

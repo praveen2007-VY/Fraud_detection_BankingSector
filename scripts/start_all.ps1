@@ -2,6 +2,10 @@
 # Unified Startup Orchestrator for Windows PowerShell
 # Starts native Kafka, native Neo4j, FastAPI Backend, and React Dashboard
 
+param(
+    [switch]$KeepAlive
+)
+
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host " Enterprise Fraud Detection System - Unified Startup" -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
@@ -154,3 +158,10 @@ Write-Host "  * Neo4j Browser UI   : http://localhost:7474" -ForegroundColor Gre
 Write-Host "  * Kafka Broker       : localhost:9092" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "To stop background services: .\scripts\stop_all.ps1" -ForegroundColor Yellow
+
+if ($KeepAlive) {
+    Write-Host "`n[Supervisor] Services running in KeepAlive mode. Press Ctrl+C or kill task to stop." -ForegroundColor Cyan
+    while ($true) {
+        Start-Sleep -Seconds 30
+    }
+}
