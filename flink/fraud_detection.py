@@ -96,6 +96,7 @@ from pyflink.common.typeinfo import Types
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import (
     KafkaOffsetsInitializer,
+    KafkaOffsetResetStrategy,
     KafkaRecordSerializationSchema,
     KafkaSink,
     KafkaSource,
@@ -275,7 +276,14 @@ def main():
         .set_bootstrap_servers(BROKER)
         .set_topics(INPUT_TOPIC)
         .set_group_id(CONSUMER_GROUP)
-        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        # Resume where this job left off; on first start skip the existing backlog
+        # so a restart doesn't re-emit every record ever produced to the topic.
+        .set_starting_offsets(
+            KafkaOffsetsInitializer.committed_offsets(KafkaOffsetResetStrategy.LATEST)
+        )
+        # No checkpointing is configured, so offsets are committed by the Kafka client
+        .set_property("enable.auto.commit", "true")
+        .set_property("auto.commit.interval.ms", "1000")
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )

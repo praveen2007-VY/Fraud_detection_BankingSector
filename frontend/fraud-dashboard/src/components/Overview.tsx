@@ -18,16 +18,19 @@ import {
   RefreshCw,
   TrendingUp,
 } from 'lucide-react';
-import { StatsResponse, RiskDistributionResponse, AlertItem, HealthResponse, TransactionSummary } from '../types';
+import { StatsResponse, RiskDistributionResponse, AlertItem, HealthResponse, TransactionSummary, StreamStatus } from '../types';
 
 interface OverviewProps {
   stats: StatsResponse | null;
   distribution: RiskDistributionResponse | null;
   recentAlerts: AlertItem[];
   health: HealthResponse | null;
+  liveTransactions: TransactionSummary[];
+  lastEventTime?: Date | null;
   onSelectTransaction: (txId: string) => void;
   onNavigateToTab: (tab: any) => void;
   wsStatus?: 'connected' | 'connecting' | 'disconnected';
+  streamStatus?: StreamStatus | null;
   onRefresh?: () => void;
   isRefreshing?: boolean;
 }
@@ -37,9 +40,11 @@ export const Overview: React.FC<OverviewProps> = ({
   distribution,
   recentAlerts,
   health,
+  liveTransactions,
   onSelectTransaction,
   onNavigateToTab,
   wsStatus = 'connected',
+  streamStatus,
   onRefresh,
   isRefreshing,
 }) => {
@@ -62,18 +67,22 @@ export const Overview: React.FC<OverviewProps> = ({
   const neo4jHealthy = health?.dependencies?.neo4j?.status === 'healthy';
   const mlHealthy = health?.dependencies?.ml_artifacts?.status === 'healthy';
 
+  const isReplay = streamStatus?.mode === 'replay';
+
   const appB = distribution?.approach_b || {
-    low: stats.low_risk_count || 79,
-    medium: stats.medium_risk_count || 1605,
-    high: stats.high_risk_count || 724,
-    critical: stats.critical_risk_count || 104,
+    low: stats.low_risk_count,
+    medium: stats.medium_risk_count,
+    high: stats.high_risk_count,
+    critical: stats.critical_risk_count,
   };
 
-  const totalDist = (appB.low + appB.medium + appB.high + appB.critical) || 2512;
-  const lowPct = Math.round((appB.low / totalDist) * 100);
-  const medPct = Math.round((appB.medium / totalDist) * 100);
-  const highPct = Math.round((appB.high / totalDist) * 100);
-  const critPct = Math.max(1, 100 - lowPct - medPct - highPct);
+  // A freshly restarted replay has no records yet; render an empty donut instead of invented counts
+  const totalDist = appB.low + appB.medium + appB.high + appB.critical;
+  const pctOf = (n: number) => (totalDist > 0 ? Math.round((n / totalDist) * 100) : 0);
+  const lowPct = pctOf(appB.low);
+  const medPct = pctOf(appB.medium);
+  const highPct = pctOf(appB.high);
+  const critPct = totalDist > 0 ? Math.max(0, 100 - lowPct - medPct - highPct) : 0;
 
   // SVG Donut calculation
   const radius = 54;
@@ -105,15 +114,15 @@ export const Overview: React.FC<OverviewProps> = ({
 
   const activeSegment = segmentDetails[selectedDonutSegment];
 
-  // Mock / Real recent transactions for right rail
-  const recentTransactions = [
-    { id: 'TX001635', title: 'Transfer Flagged', account: 'AC00358', amount: '$1,762', isRisk: true, date: '13 Oct 2026', type: 'out' },
-    { id: 'TX000412', title: 'Deposit Online', account: 'AC00042', amount: '$291', isRisk: false, date: '13 Oct 2026', type: 'in' },
-    { id: 'TX000892', title: 'Deposit Merchant', account: 'AC00115', amount: '$691', isRisk: false, date: '13 Oct 2026', type: 'in' },
-    { id: 'TX001944', title: 'Critical Outlier', account: 'AC00481', amount: '$1,480', isRisk: true, date: '12 Oct 2026', type: 'out' },
-    { id: 'TX000721', title: 'Deposit Clean', account: 'AC00088', amount: '$258', isRisk: false, date: '12 Oct 2026', type: 'in' },
-    { id: 'TX001103', title: 'Transfer Deposit', account: 'AC00219', amount: '$308', isRisk: false, date: '12 Oct 2026', type: 'in' },
-  ];
+  // Most recent records processed by the backend in this replay session
+  const recentTransactions = liveTransactions.slice(0, 6).map((tx) => ({
+    id: tx.transaction_id,
+    title: `${tx.transaction_type || 'Transaction'}${tx.is_flagged ? ' Flagged' : ''}`,
+    account: tx.account_id,
+    amount: `$${tx.transaction_amount.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
+    isRisk: tx.is_flagged,
+    date: tx.replay_sequence ? `#${tx.replay_sequence} · ${tx.transaction_date}` : tx.transaction_date,
+  }));
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
@@ -125,7 +134,13 @@ export const Overview: React.FC<OverviewProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">Overview</h1>
-            <p className="text-xs text-slate-400 font-medium">Real-time banking transactions & fraud telemetry</p>
+            <p className="text-xs text-slate-400 font-medium">
+              {isReplay
+                ? `Dataset replay from record 1 · ${(streamStatus?.processed ?? 0).toLocaleString()} of ${(streamStatus?.total_records ?? 0).toLocaleString()} processed${
+                    streamStatus?.route === 'direct' ? ' · Flink job not running, sent straight to backend' : ''
+                  }`
+                : 'Dataset snapshot with precomputed scores · refresh to replay it through the pipeline'}
+            </p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -142,8 +157,9 @@ export const Overview: React.FC<OverviewProps> = ({
             {onRefresh && (
               <button
                 onClick={onRefresh}
+                disabled={isRefreshing}
                 className="h-9 w-9 rounded-full bg-white border border-slate-200/80 flex items-center justify-center text-slate-500 hover:text-slate-800 hover:shadow-sm transition-all"
-                title="Refresh metrics"
+                title="Restart dataset replay from the first record"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-[#05C168]' : ''}`} />
               </button>
@@ -391,7 +407,9 @@ export const Overview: React.FC<OverviewProps> = ({
 
             {/* Bottom mini bar visualization matching reference */}
             <div className="flex items-end justify-between pt-2 border-t border-emerald-500/30">
-              <span className="text-xs font-semibold text-emerald-100">Live Flink Telemetry</span>
+              <span className="text-xs font-semibold text-emerald-100">
+                {isReplay ? (streamStatus?.route === 'flink' ? 'Replay via Flink' : 'Replay (Flink bypassed)') : 'Dataset Snapshot'}
+              </span>
               <div className="flex items-end gap-1.5 h-7">
                 <span className="w-2 h-3 bg-emerald-300/40 rounded-sm" />
                 <span className="w-2 h-5 bg-emerald-300/70 rounded-sm" />
@@ -569,7 +587,12 @@ export const Overview: React.FC<OverviewProps> = ({
 
           {/* List of items with circular directional buttons */}
           <div className="space-y-3.5">
-            {recentTransactions.map((tx, idx) => (
+            {recentTransactions.length === 0 && (
+              <p className="text-xs text-slate-400 font-medium p-2.5">
+                {isReplay ? 'Waiting for the first replayed record to be processed...' : 'No records streamed yet. Click refresh to start the replay.'}
+              </p>
+            )}
+            {recentTransactions.map((tx) => (
               <div
                 key={tx.id}
                 onClick={() => onSelectTransaction(tx.id)}

@@ -14,8 +14,27 @@ import {
   AlertItem,
   HealthResponse,
   TransactionSummary,
+  StreamStatus,
 } from './types';
 import { api, WS_BASE_URL } from './api';
+
+const EMPTY_BANDS = { low: 0, medium: 0, high: 0, critical: 0 };
+
+const emptyStats = (prev: StatsResponse | null): StatsResponse => ({
+  total_transactions: 0,
+  total_volume: 0,
+  currency: prev?.currency ?? 'USD',
+  low_risk_count: 0,
+  medium_risk_count: 0,
+  high_risk_count: 0,
+  critical_risk_count: 0,
+  flagged_count: 0,
+  flagged_percentage: 0,
+  unique_accounts: 0,
+  high_risk_accounts: 0,
+  graph_scoring_available: prev?.graph_scoring_available ?? false,
+  ml_scoring_available: prev?.ml_scoring_available ?? false,
+});
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<TabType>('overview');
@@ -29,10 +48,15 @@ export const App: React.FC = () => {
   const [wsStatus, setWsStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
   const [lastEventTime, setLastEventTime] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   // Track seen IDs to prevent double counting
   const seenTxIdsRef = useRef<Set<string>>(new Set());
   const seenAccountsRef = useRef<Set<string>>(new Set());
+  const seenHighRiskAccountsRef = useRef<Set<string>>(new Set());
+  // Replay session currently shown; records from any other session start a fresh view
+  const sessionIdRef = useRef<string | null>(null);
 
   // Inspector & Graph navigation state
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
@@ -41,16 +65,38 @@ export const App: React.FC = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<any>(null);
 
+  // Clears every stream-derived view so a replay session is rendered from its first record
+  const resetStreamView = (status: StreamStatus) => {
+    sessionIdRef.current = status.session_id ?? null;
+    seenTxIdsRef.current = new Set();
+    seenAccountsRef.current = new Set();
+    seenHighRiskAccountsRef.current = new Set();
+    setLiveTransactions([]);
+    setAlerts([]);
+    setLastEventTime(null);
+    setStats((prev) => emptyStats(prev));
+    setDistribution({ approach_a: { ...EMPTY_BANDS }, approach_b: { ...EMPTY_BANDS }, anomaly: { ...EMPTY_BANDS }, total: 0 });
+    setStreamStatus(status);
+  };
+
   const loadData = async () => {
     setIsRefreshing(true);
     try {
-      const [healthData, statsData, distData, alertsData] = await Promise.all([
+      const [healthData, statsData, distData, alertsData, streamData] = await Promise.all([
         api.getHealth().catch(() => null),
         api.getStats().catch(() => null),
         api.getRiskDistribution().catch(() => null),
         api.getAlerts(100).catch(() => ({ items: [], total: 0 })),
+        api.getStreamStatus().catch(() => null),
       ]);
       if (healthData) setHealth(healthData);
+      if (streamData) {
+        if (streamData.mode === 'replay' && streamData.session_id !== sessionIdRef.current) {
+          resetStreamView(streamData);
+        } else {
+          setStreamStatus(streamData);
+        }
+      }
       if (statsData) {
         setStats((prev) => {
           if (!prev) return statsData;
@@ -75,6 +121,20 @@ export const App: React.FC = () => {
     } finally {
       setIsRefreshing(false);
     }
+  };
+
+  // Refresh icon: restart the dataset replay from its first record through Kafka and the backend
+  const restartStream = async () => {
+    setIsRefreshing(true);
+    setStreamError(null);
+    try {
+      const status = await api.restartReplay();
+      resetStreamView(status);
+    } catch (e) {
+      console.error('Failed to restart dataset replay:', e);
+      setStreamError(e instanceof Error ? e.message : String(e));
+    }
+    await loadData();
   };
 
   useEffect(() => {
@@ -102,11 +162,34 @@ export const App: React.FC = () => {
         ws.onmessage = (event) => {
           try {
             const parsed = JSON.parse(event.data);
+            if (parsed.event_type === 'stream.reset' && parsed.stream) {
+              if (parsed.stream.session_id !== sessionIdRef.current) {
+                resetStreamView(parsed.stream);
+              }
+              return;
+            }
             if (parsed.event_type === 'transaction.processed' && parsed.data) {
               const newTx: TransactionSummary = {
                 ...parsed.data,
                 is_live: true,
               };
+
+              const streamMeta = parsed.stream;
+              if (streamMeta?.source === 'dataset_replay') {
+                // The record can arrive before the stream.reset event for its session
+                if (streamMeta.session_id !== sessionIdRef.current) {
+                  resetStreamView({
+                    mode: 'replay',
+                    source: 'dataset_replay',
+                    session_id: streamMeta.session_id,
+                    total_records: 0,
+                    processed: 0,
+                  });
+                }
+                setStreamStatus((prev) =>
+                  prev ? { ...prev, processed: Math.max(prev.processed, streamMeta.processed ?? 0) } : prev
+                );
+              }
 
               // Mark timestamp of last received live event
               setLastEventTime(new Date());
@@ -146,6 +229,10 @@ export const App: React.FC = () => {
               seenTxIdsRef.current.add(newTx.transaction_id);
               const isNewAccount = newTx.account_id ? !seenAccountsRef.current.has(newTx.account_id) : false;
               if (newTx.account_id) seenAccountsRef.current.add(newTx.account_id);
+              const isHighRisk = newTx.risk_level === 'high' || newTx.risk_level === 'critical';
+              const isNewHighRiskAccount =
+                isHighRisk && !!newTx.account_id && !seenHighRiskAccountsRef.current.has(newTx.account_id);
+              if (isNewHighRiskAccount) seenHighRiskAccountsRef.current.add(newTx.account_id);
 
               // Update stats counter dynamically
               if (isNewTx) {
@@ -167,6 +254,7 @@ export const App: React.FC = () => {
                     flagged_count: newFlagged,
                     flagged_percentage: newPct,
                     unique_accounts: newUniqueAccounts,
+                    high_risk_accounts: isNewHighRiskAccount ? prev.high_risk_accounts + 1 : prev.high_risk_accounts,
                     low_risk_count: lowCount,
                     medium_risk_count: medCount,
                     high_risk_count: highCount,
@@ -178,7 +266,7 @@ export const App: React.FC = () => {
                 setDistribution((prev) => {
                   if (!prev) return prev;
                   const level = newTx.risk_level || 'low';
-                  const prevB = prev.approach_b || { low: 79, medium: 1605, high: 724, critical: 104 };
+                  const prevB = prev.approach_b || { ...EMPTY_BANDS };
                   return {
                     ...prev,
                     total: prev.total + 1,
@@ -234,7 +322,9 @@ export const App: React.FC = () => {
         health={health}
         wsStatus={wsStatus}
         lastEventTime={lastEventTime}
-        onRefresh={loadData}
+        streamStatus={streamStatus}
+        streamError={streamError}
+        onRefresh={restartStream}
         isRefreshing={isRefreshing}
       />
 
@@ -261,7 +351,8 @@ export const App: React.FC = () => {
                 onSelectTransaction={setSelectedTxId}
                 onNavigateToTab={setCurrentTab}
                 wsStatus={wsStatus}
-                onRefresh={loadData}
+                streamStatus={streamStatus}
+                onRefresh={restartStream}
                 isRefreshing={isRefreshing}
               />
             )}
@@ -269,9 +360,9 @@ export const App: React.FC = () => {
             {currentTab === 'transactions' && (
               <LiveTransactions
                 liveTransactions={liveTransactions}
-                lastEventTime={lastEventTime}
                 onSelectTransaction={setSelectedTxId}
                 wsStatus={wsStatus}
+                streamStatus={streamStatus}
               />
             )}
 

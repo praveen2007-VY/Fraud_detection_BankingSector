@@ -8,6 +8,7 @@ import {
   RiskDistributionResponse,
   ModelComparisonResponse,
   TransactionSummary,
+  StreamStatus,
 } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -77,4 +78,7 @@ export const api = {
   },
   getRiskDistribution: () => fetchJson<RiskDistributionResponse>('/api/analytics/risk-distribution'),
   getModelComparison: () => fetchJson<ModelComparisonResponse>('/api/analytics/model-comparison'),
+  getStreamStatus: () => fetchJson<StreamStatus>('/api/stream/status'),
+  restartReplay: (delay?: number) =>
+    fetchJson<StreamStatus>(`/api/stream/replay${delay !== undefined ? `?delay=${delay}` : ''}`, { method: 'POST' }),
 };

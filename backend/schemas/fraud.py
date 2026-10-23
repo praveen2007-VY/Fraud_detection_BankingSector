@@ -124,3 +124,20 @@ class ModelComparisonResponse(BaseModel):
     metrics: Dict[str, Dict[str, float]]
     correlations: Dict[str, float]
     score_interpretation: Dict[str, str]
+
+
+class StreamStatusResponse(BaseModel):
+    # "snapshot": dashboard shows the preloaded dataset; "replay": dashboard shows
+    # only records processed by the pipeline since the last replay started.
+    mode: str
+    source: str
+    session_id: Optional[str] = None
+    route: Optional[str] = None
+    running: bool = False
+    total_records: int = 0
+    published: int = 0
+    processed: int = 0
+    delay_seconds: float = 0.0
+    started_at: Optional[str] = None
+    finished_publishing_at: Optional[str] = None
+    error: Optional[str] = None

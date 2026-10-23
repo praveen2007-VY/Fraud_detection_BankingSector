@@ -8,8 +8,10 @@ from backend.config import CORS_ORIGINS
 from backend.routes.health import router as health_router
 from backend.routes.fraud import router as fraud_router
 from backend.routes.analytics import router as analytics_router
+from backend.routes.stream import router as stream_router
 from backend.services.kafka_service import KafkaService
 from backend.services.graph_service import GraphService
+from backend.services.replay_service import ReplayService
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,6 +32,7 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Shutting down Fraud Detection Backend...")
+    ReplayService.get_instance().stop()
     kafka_service.stop_consumer()
     GraphService.get_instance().close()
     logger.info("Shutdown complete.")
@@ -55,6 +58,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(fraud_router)
 app.include_router(analytics_router)
+app.include_router(stream_router)
 
 
 @app.get("/")

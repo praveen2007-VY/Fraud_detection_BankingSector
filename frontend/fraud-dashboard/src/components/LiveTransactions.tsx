@@ -11,19 +11,21 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
 } from 'lucide-react';
-import { TransactionSummary } from '../types';
+import { TransactionSummary, StreamStatus } from '../types';
 import { api } from '../api';
 
 interface LiveTransactionsProps {
   liveTransactions: TransactionSummary[];
   onSelectTransaction: (txId: string) => void;
   wsStatus: 'connected' | 'connecting' | 'disconnected';
+  streamStatus?: StreamStatus | null;
 }
 
 export const LiveTransactions: React.FC<LiveTransactionsProps> = ({
   liveTransactions,
   onSelectTransaction,
   wsStatus,
+  streamStatus,
 }) => {
   const [transactions, setTransactions] = useState<TransactionSummary[]>([]);
   const [total, setTotal] = useState<number>(0);
@@ -61,7 +63,9 @@ export const LiveTransactions: React.FC<LiveTransactionsProps> = ({
 
   useEffect(() => {
     fetchTransactions();
-  }, [page, limit, search, riskLevel, flaggedOnly, sortBy, order]);
+  }, [page, limit, search, riskLevel, flaggedOnly, sortBy, order, streamStatus?.session_id]);
+
+  const isReplay = streamStatus?.mode === 'replay';
 
   // Combine newly arrived live events if on page 0 and no search filter
   const displayedTransactions = React.useMemo(() => {
@@ -94,13 +98,24 @@ export const LiveTransactions: React.FC<LiveTransactionsProps> = ({
             <h2 className="text-xl font-extrabold text-slate-800 tracking-tight">Transaction Stream</h2>
             <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-[#05C168] border border-emerald-200">
               <span className={`status-pulse ${wsStatus === 'connected' ? 'online' : 'degraded'}`} />
-              <span>{wsStatus === 'connected' ? 'WEBSOCKET LIVE' : wsStatus.toUpperCase()}</span>
+              <span>
+                {wsStatus !== 'connected'
+                  ? wsStatus.toUpperCase()
+                  : isReplay
+                  ? 'DATASET REPLAY'
+                  : 'DATASET SNAPSHOT'}
+              </span>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
             <span className="text-xs text-slate-400 font-medium">
-              Total Records: <strong className="text-slate-800 font-extrabold font-mono">{total.toLocaleString()}</strong>
+              {isReplay ? 'Processed: ' : 'Total Records: '}
+              <strong className="text-slate-800 font-extrabold font-mono">
+                {isReplay
+                  ? `${Math.max(total, streamStatus.processed).toLocaleString()} / ${streamStatus.total_records.toLocaleString()}`
+                  : total.toLocaleString()}
+              </strong>
             </span>
           </div>
         </div>

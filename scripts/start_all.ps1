@@ -103,7 +103,11 @@ if (Test-PortOpen 8081) {
     Write-Host "  [OK] Apache Flink pipeline is already running on port 8081." -ForegroundColor Green
 } else {
     Write-Host "  Starting Apache Flink streaming pipeline (fraud_detection.py)..." -ForegroundColor Yellow
-    Start-Process -FilePath "python" -ArgumentList "flink/fraud_detection.py" -WorkingDirectory $ProjectRoot -WindowStyle Hidden
+    # Capture output so a crashed job leaves a trace instead of silently showing OFFLINE
+    $flinkLog = Join-Path $ProjectRoot "flink\flink_job.log"
+    $flinkErrLog = Join-Path $ProjectRoot "flink\flink_job.err.log"
+    Start-Process -FilePath "python" -ArgumentList "flink/fraud_detection.py" -WorkingDirectory $ProjectRoot -WindowStyle Hidden `
+        -RedirectStandardOutput $flinkLog -RedirectStandardError $flinkErrLog
     
     $ready = $false
     for ($i = 1; $i -le 25; $i++) {
@@ -117,7 +121,7 @@ if (Test-PortOpen 8081) {
     if ($ready) {
         Write-Host "  [OK] Apache Flink started and listening on port 8081." -ForegroundColor Green
     } else {
-        Write-Host "  [WARN] Apache Flink did not open port 8081 within 25s." -ForegroundColor Yellow
+        Write-Host "  [WARN] Apache Flink did not open port 8081 within 25s. Check flink\flink_job.err.log." -ForegroundColor Yellow
     }
 }
 

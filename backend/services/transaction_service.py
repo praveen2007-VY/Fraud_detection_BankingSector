@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import pandas as pd
@@ -23,8 +24,16 @@ class TransactionService:
     _instance: Optional["TransactionService"] = None
 
     def __init__(self):
+        # Dashboard view: the preloaded dataset until a replay starts, then only
+        # the records the pipeline has processed in the current replay session.
         self.transactions: List[Dict[str, Any]] = []
         self.tx_by_id: Dict[str, Dict[str, Any]] = {}
+        # Preloaded dataset, kept for detail lookups after a replay resets the view
+        self.catalog_by_id: Dict[str, Dict[str, Any]] = {}
+        self.stream_mode = "snapshot"
+        self.stream_session_id: Optional[str] = None
+        self.stream_processed_count = 0
+        self._lock = threading.Lock()
         self.scoring_service = ScoringService.get_instance()
         self.load_transactions()
 
@@ -73,16 +82,32 @@ class TransactionService:
                 }
                 self.transactions.append(tx_item)
                 self.tx_by_id[tx_id] = tx_item
+                self.catalog_by_id[tx_id] = tx_item
 
             logger.info("Loaded and enriched %d transactions.", len(self.transactions))
         except Exception as e:
             logger.error("Error loading transactions from CSV: %s", e)
 
-    def add_or_update_live_transaction(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Adds or updates a live transaction coming from Kafka."""
+    def reset_stream(self, session_id: str):
+        """Clears the dashboard view so a replay session starts from zero records."""
+        with self._lock:
+            self.transactions = []
+            self.tx_by_id = {}
+            self.stream_mode = "replay"
+            self.stream_session_id = session_id
+            self.stream_processed_count = 0
+        logger.info("[REPLAY] Stream view reset for session %s", session_id)
+
+    def add_or_update_live_transaction(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Adds or updates a live transaction coming from Kafka. Returns None for stale replay records."""
         tx_id = str(record.get("TransactionID") or record.get("transaction_id", "")).strip()
         if not tx_id:
             return record
+
+        replay_session = record.get("replay_session_id")
+        if replay_session and replay_session != self.stream_session_id:
+            logger.info("[REPLAY] Dropping tx %s from superseded replay session %s", tx_id, replay_session)
+            return None
 
         # 1. Ingest into Neo4j graph database to keep topology real-time
         try:
@@ -109,14 +134,23 @@ class TransactionService:
             "ip_address": str(record.get("IP Address") or record.get("ip_address", "")),
             "merchant_id": str(record.get("MerchantID") or record.get("merchant_id", "")),
             "processing_timestamp": str(proc_ts),
+            "stream_source": "dataset_replay" if replay_session else "kafka",
+            "replay_session_id": replay_session,
+            "replay_sequence": record.get("replay_sequence"),
             **scores,
         }
 
         # 3. Insert or re-order transaction to top of stream feed
-        if tx_id in self.tx_by_id:
-            self.transactions = [t for t in self.transactions if t["transaction_id"] != tx_id]
-        self.transactions.insert(0, tx_item)
-        self.tx_by_id[tx_id] = tx_item
+        with self._lock:
+            # A replay may have been restarted while this record was being ingested
+            if replay_session and replay_session != self.stream_session_id:
+                return None
+            if tx_id in self.tx_by_id:
+                self.transactions = [t for t in self.transactions if t["transaction_id"] != tx_id]
+            self.transactions.insert(0, tx_item)
+            self.tx_by_id[tx_id] = tx_item
+            if replay_session:
+                self.stream_processed_count += 1
 
         logger.info(
             "[LIVE-EVENT] Ingested & Scored Tx: %s | Acct: %s | Amount: $%.2f | Risk: %s | Flagged: %s",
@@ -193,7 +227,8 @@ class TransactionService:
         )
 
     def get_transaction_by_id(self, transaction_id: str) -> Optional[TransactionDetailResponse]:
-        tx = self.tx_by_id.get(str(transaction_id).strip())
+        tx_id = str(transaction_id).strip()
+        tx = self.tx_by_id.get(tx_id) or self.catalog_by_id.get(tx_id)
         if not tx:
             return None
 

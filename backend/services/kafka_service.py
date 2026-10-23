@@ -165,11 +165,19 @@ class KafkaService:
 
                 # Process transaction, materialize in Neo4j, and join scores
                 enriched = tx_service.add_or_update_live_transaction(data)
+                if enriched is None:
+                    continue
 
                 # Broadcast WebSocket event
                 event = {
                     "event_type": "transaction.processed",
                     "timestamp": enriched.get("processing_timestamp") or time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "stream": {
+                        "source": enriched.get("stream_source", "kafka"),
+                        "session_id": enriched.get("replay_session_id"),
+                        "sequence": enriched.get("replay_sequence"),
+                        "processed": tx_service.stream_processed_count,
+                    },
                     "data": enriched,
                 }
 

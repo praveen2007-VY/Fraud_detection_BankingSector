@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldCheck, Radio, RefreshCw, Server, Database, Cpu } from 'lucide-react';
-import { HealthResponse } from '../types';
+import { HealthResponse, StreamStatus } from '../types';
 
 interface NavbarProps {
   health: HealthResponse | null;
   wsStatus: 'connected' | 'connecting' | 'disconnected';
   lastEventTime?: Date | null;
+  streamStatus?: StreamStatus | null;
+  streamError?: string | null;
   onRefresh: () => void;
   isRefreshing: boolean;
 }
@@ -14,6 +16,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   health,
   wsStatus,
   lastEventTime,
+  streamStatus,
+  streamError,
   onRefresh,
   isRefreshing,
 }) => {
@@ -39,6 +43,23 @@ export const Navbar: React.FC<NavbarProps> = ({
   const isStreamingLive = wsStatus === 'connected' && lastEventTime && (nowTs - lastEventTime.getTime() < 15000);
   const lastEventSeconds = lastEventTime ? Math.max(0, Math.round((nowTs - lastEventTime.getTime()) / 1000)) : null;
 
+  // The only producer is the bundled dataset, so label the stream by its source rather than as live traffic
+  const isReplay = streamStatus?.mode === 'replay';
+  const sourceLabel = isReplay ? 'Dataset Replay' : 'Dataset Snapshot';
+  const replayProgress =
+    isReplay && streamStatus.total_records > 0
+      ? `${streamStatus.processed.toLocaleString()}/${streamStatus.total_records.toLocaleString()}`
+      : null;
+  const routeLabel =
+    streamStatus?.route === 'flink' ? 'Kafka -> Flink -> backend' : streamStatus?.route === 'direct' ? 'Kafka -> backend (Flink job not running)' : null;
+  const streamTitle = streamError
+    ? `Replay restart failed: ${streamError}`
+    : isReplay
+    ? `Replaying transactions_clean.csv from record 1${routeLabel ? ` via ${routeLabel}` : ''}. ${
+        lastEventSeconds !== null ? `Last record processed ${lastEventSeconds}s ago.` : 'Waiting for first processed record.'
+      }`
+    : 'Showing the preloaded dataset with precomputed scores. Click refresh to replay it through the pipeline.';
+
   return (
     <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs">
       <div className="flex items-center gap-3">
@@ -50,8 +71,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             <h1 className="text-sm font-extrabold text-slate-800 tracking-tight">
               EGIS-SENTINEL
             </h1>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-[#05C168] border border-emerald-200">
-              v1.0 Stream
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+              {sourceLabel}
             </span>
           </div>
           <p className="text-[11px] text-slate-400 font-medium">Enterprise Real-Time Fraud & Anomaly Intelligence</p>
@@ -64,32 +85,38 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* WebSocket stream status */}
           <div
             className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80 cursor-default"
-            title={lastEventSeconds !== null ? `Last event received ${lastEventSeconds}s ago` : 'Awaiting producer event stream'}
+            title={streamTitle}
           >
             <Radio className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-slate-500 font-medium">Stream:</span>
+            <span className="text-slate-500 font-medium">{isReplay ? 'Replay:' : 'Stream:'}</span>
             <span className="flex items-center gap-1 font-bold">
               <span
                 className={`status-pulse ${
-                  wsStatus !== 'connected' ? 'offline' : isStreamingLive ? 'online' : 'degraded'
+                  wsStatus !== 'connected' || streamError ? 'offline' : isStreamingLive ? 'online' : 'degraded'
                 }`}
               />
               <span
                 className={
-                  wsStatus !== 'connected'
+                  wsStatus !== 'connected' || streamError
                     ? 'text-rose-500'
                     : isStreamingLive
                     ? 'text-[#05C168]'
                     : 'text-amber-500'
                 }
               >
-                {wsStatus !== 'connected'
+                {streamError
+                  ? 'RESTART FAILED'
+                  : wsStatus !== 'connected'
                   ? wsStatus.toUpperCase()
+                  : !isReplay
+                  ? 'NOT STREAMING'
                   : isStreamingLive
-                  ? 'STREAMING'
+                  ? `REPLAYING ${replayProgress ?? ''}`.trim()
+                  : streamStatus.processed > 0 && streamStatus.processed >= streamStatus.total_records
+                  ? `COMPLETE ${replayProgress ?? ''}`.trim()
                   : lastEventSeconds !== null
                   ? `IDLE (${lastEventSeconds}s)`
-                  : 'IDLE'}
+                  : 'WAITING'}
               </span>
             </span>
           </div>
@@ -152,7 +179,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={onRefresh}
             disabled={isRefreshing}
             className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors"
-            title="Refresh system state"
+            title="Restart dataset replay from the first record"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#05C168]' : ''}`} />
           </button>

@@ -19,6 +19,27 @@ export interface TransactionSummary {
   risk_reasons?: string | null;
   approach_a_prominent_factors?: string | null;
   is_live?: boolean;
+  processing_timestamp?: string;
+  stream_source?: 'dataset_replay' | 'kafka';
+  replay_session_id?: string | null;
+  replay_sequence?: number | null;
+}
+
+// 'snapshot': preloaded dataset with precomputed scores (nothing streamed yet)
+// 'replay': only records the pipeline has processed since the last replay started
+export interface StreamStatus {
+  mode: 'snapshot' | 'replay';
+  source: 'dataset_snapshot' | 'dataset_replay';
+  session_id?: string | null;
+  route?: 'flink' | 'direct' | null;
+  running?: boolean;
+  total_records: number;
+  published?: number;
+  processed: number;
+  delay_seconds?: number;
+  started_at?: string | null;
+  finished_publishing_at?: string | null;
+  error?: string | null;
 }
 
 export interface TransactionListResponse {
