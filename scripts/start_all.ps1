@@ -97,8 +97,32 @@ if (Test-PortOpen 7687) {
     }
 }
 
-# 3. Check & Start FastAPI Backend
-Write-Host "`n[3/4] Checking FastAPI Backend API (http://127.0.0.1:8000)..." -ForegroundColor Yellow
+# 3. Check & Start Apache Flink Pipeline
+Write-Host "`n[3/5] Checking Apache Flink Pipeline (localhost:8081)..." -ForegroundColor Yellow
+if (Test-PortOpen 8081) {
+    Write-Host "  [OK] Apache Flink pipeline is already running on port 8081." -ForegroundColor Green
+} else {
+    Write-Host "  Starting Apache Flink streaming pipeline (fraud_detection.py)..." -ForegroundColor Yellow
+    Start-Process -FilePath "python" -ArgumentList "flink/fraud_detection.py" -WorkingDirectory $ProjectRoot -WindowStyle Hidden
+    
+    $ready = $false
+    for ($i = 1; $i -le 25; $i++) {
+        Start-Sleep -Seconds 1
+        if (Test-PortOpen 8081) {
+            $ready = $true
+            break
+        }
+    }
+
+    if ($ready) {
+        Write-Host "  [OK] Apache Flink started and listening on port 8081." -ForegroundColor Green
+    } else {
+        Write-Host "  [WARN] Apache Flink did not open port 8081 within 25s." -ForegroundColor Yellow
+    }
+}
+
+# 4. Check & Start FastAPI Backend
+Write-Host "`n[4/5] Checking FastAPI Backend API (http://127.0.0.1:8000)..." -ForegroundColor Yellow
 if (Test-PortOpen 8000) {
     Write-Host "  [OK] Backend server is already running on port 8000." -ForegroundColor Green
 } else {
@@ -121,8 +145,8 @@ if (Test-PortOpen 8000) {
     }
 }
 
-# 4. Check & Start React Frontend
-Write-Host "`n[4/4] Checking React Dashboard Server (http://localhost:5173)..." -ForegroundColor Yellow
+# 5. Check & Start React Frontend
+Write-Host "`n[5/5] Checking React Dashboard Server (http://localhost:5173)..." -ForegroundColor Yellow
 $frontendDir = Join-Path $ProjectRoot "frontend\fraud-dashboard"
 if (Test-PortOpen 5173) {
     Write-Host "  [OK] React Dashboard is already running on port 5173." -ForegroundColor Green
@@ -154,6 +178,7 @@ Write-Host "  * React Dashboard UI : http://localhost:5173" -ForegroundColor Gre
 Write-Host "  * FastAPI Backend    : http://127.0.0.1:8000" -ForegroundColor Green
 Write-Host "  * Swagger API Docs   : http://127.0.0.1:8000/docs" -ForegroundColor Green
 Write-Host "  * WebSocket Feed     : ws://127.0.0.1:8000/ws/transactions" -ForegroundColor Green
+Write-Host "  * Flink MiniCluster  : http://127.0.0.1:8081" -ForegroundColor Green
 Write-Host "  * Neo4j Browser UI   : http://localhost:7474" -ForegroundColor Green
 Write-Host "  * Kafka Broker       : localhost:9092" -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan

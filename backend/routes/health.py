@@ -15,6 +15,7 @@ async def check_health():
 
     neo4j_ok = graph_service.verify_connectivity()
     kafka_health = kafka_service.check_broker_health()
+    flink_health = kafka_service.check_flink_health()
     ml_status = scoring_service.check_ml_artifacts_status()
 
     dependencies = {
@@ -26,6 +27,11 @@ async def check_health():
             status="healthy" if kafka_health.get("reachable") else "unreachable",
             message="Kafka broker connected" if kafka_health.get("reachable") else kafka_health.get("error", "Cannot connect to Kafka broker"),
             details=kafka_health,
+        ),
+        "flink": HealthDependency(
+            status=flink_health.get("status", "offline"),
+            message=flink_health.get("message", "Flink pipeline status check"),
+            details=flink_health,
         ),
         "ml_artifacts": HealthDependency(
             status="healthy" if ml_status.get("model_checkpoint_present") and ml_status.get("scores_present") else "degraded",

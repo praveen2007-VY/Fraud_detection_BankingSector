@@ -81,6 +81,33 @@ class KafkaService:
                 "error": str(e),
             }
 
+    def check_flink_health(self) -> Dict[str, Any]:
+        """Probes Apache Flink streaming engine availability on port 8081."""
+        import urllib.request
+        try:
+            req = urllib.request.Request("http://127.0.0.1:8081/jobs", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    jobs = data.get("jobs", [])
+                    running = [j for j in jobs if j.get("status") == "RUNNING"]
+                    return {
+                        "reachable": True,
+                        "status": "healthy" if running else "idle",
+                        "running_jobs": len(running),
+                        "total_jobs": len(jobs),
+                        "message": f"Flink pipeline active with {len(running)} running job(s)" if running else "Flink cluster online (no active jobs)",
+                    }
+        except Exception as e:
+            return {
+                "reachable": False,
+                "status": "offline",
+                "running_jobs": 0,
+                "total_jobs": 0,
+                "message": "Flink streaming job not detected on port 8081",
+                "error": str(e),
+            }
+
     def start_consumer(self, loop: asyncio.AbstractEventLoop):
         if self.running:
             return
@@ -126,10 +153,17 @@ class KafkaService:
                     time.sleep(1.0)
                     continue
 
-                raw_val = msg.value().decode("utf-8")
-                data = json.loads(raw_val)
+                try:
+                    raw_val = msg.value().decode("utf-8")
+                    data = json.loads(raw_val)
+                except Exception as parse_err:
+                    logger.warning("[KAFKA-RX] Discarding invalid non-JSON payload: %s", parse_err)
+                    continue
 
-                # Process transaction and join scores
+                tx_id = str(data.get("TransactionID") or data.get("transaction_id", "UNKNOWN"))
+                logger.info("[KAFKA-RX] Received transaction %s from topic '%s'", tx_id, KAFKA_PROCESSED_TOPIC)
+
+                # Process transaction, materialize in Neo4j, and join scores
                 enriched = tx_service.add_or_update_live_transaction(data)
 
                 # Broadcast WebSocket event
@@ -138,6 +172,9 @@ class KafkaService:
                     "timestamp": enriched.get("processing_timestamp") or time.strftime("%Y-%m-%d %H:%M:%S"),
                     "data": enriched,
                 }
+
+                client_count = len(self.connection_manager.active_connections)
+                logger.info("[BROADCAST] Broadcasting transaction %s to %d active WebSocket client(s)", tx_id, client_count)
 
                 if self._loop and self._loop.is_running():
                     asyncio.run_coroutine_threadsafe(

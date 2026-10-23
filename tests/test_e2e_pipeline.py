@@ -23,7 +23,9 @@ import socket
 import urllib.request
 import pytest
 from neo4j import GraphDatabase
-from confluent_kafka import Producer, Consumer, KafkaError, TopicPartition
+# pyrefly: ignore[missing-import]
+from confluent_kafka import Producer
+# pyrefly: ignore[missing-import]
 from confluent_kafka.admin import AdminClient
 
 # Ensure root in sys.path

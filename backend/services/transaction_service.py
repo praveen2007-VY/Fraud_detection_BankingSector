@@ -1,9 +1,11 @@
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import pandas as pd
 
 from backend.config import CLEAN_TRANSACTIONS_CSV
 from backend.services.scoring_service import ScoringService
+from backend.services.graph_service import GraphService
 from backend.schemas.fraud import (
     TransactionSummary,
     TransactionListResponse,
@@ -82,7 +84,19 @@ class TransactionService:
         if not tx_id:
             return record
 
-        scores = self.scoring_service.get_scores_for_transaction(tx_id)
+        # 1. Ingest into Neo4j graph database to keep topology real-time
+        try:
+            GraphService.get_instance().ingest_transaction(record)
+        except Exception as e:
+            logger.warning("Error during live Neo4j ingestion for tx %s: %s", tx_id, e)
+
+        # 2. Score using Phase 5 graph scoring & Phase 6 C2GAT ML models
+        scores = self.scoring_service.get_scores_for_transaction(tx_id, record)
+        
+        proc_ts = record.get("processing_timestamp")
+        if not proc_ts:
+            proc_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
         tx_item = {
             "transaction_id": tx_id,
             "account_id": str(record.get("AccountID") or record.get("account_id", "")).strip(),
@@ -94,21 +108,25 @@ class TransactionService:
             "device_id": str(record.get("DeviceID") or record.get("device_id", "")),
             "ip_address": str(record.get("IP Address") or record.get("ip_address", "")),
             "merchant_id": str(record.get("MerchantID") or record.get("merchant_id", "")),
-            "processing_timestamp": str(record.get("processing_timestamp", "")),
+            "processing_timestamp": str(proc_ts),
             **scores,
         }
 
+        # 3. Insert or re-order transaction to top of stream feed
         if tx_id in self.tx_by_id:
-            # Update existing
-            for idx, existing in enumerate(self.transactions):
-                if existing["transaction_id"] == tx_id:
-                    self.transactions[idx] = tx_item
-                    break
-        else:
-            # Prepend live new transaction
-            self.transactions.insert(0, tx_item)
-
+            self.transactions = [t for t in self.transactions if t["transaction_id"] != tx_id]
+        self.transactions.insert(0, tx_item)
         self.tx_by_id[tx_id] = tx_item
+
+        logger.info(
+            "[LIVE-EVENT] Ingested & Scored Tx: %s | Acct: %s | Amount: $%.2f | Risk: %s | Flagged: %s",
+            tx_id,
+            tx_item["account_id"],
+            tx_item["transaction_amount"],
+            tx_item.get("risk_level", "low"),
+            tx_item.get("is_flagged", False),
+        )
+
         return tx_item
 
     def get_transactions(

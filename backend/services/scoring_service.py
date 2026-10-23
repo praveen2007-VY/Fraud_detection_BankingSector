@@ -70,7 +70,7 @@ class ScoringService:
             except Exception as e:
                 logger.error("Failed to load Phase 6 scores: %s", e)
 
-    def get_scores_for_transaction(self, transaction_id: str) -> Dict[str, Any]:
+    def get_scores_for_transaction(self, transaction_id: str, record: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         tx_id = str(transaction_id).strip()
         p5 = self.phase5_data.get(tx_id, {})
         p6 = self.phase6_data.get(tx_id, {})
@@ -78,14 +78,32 @@ class ScoringService:
         approach_a = p5.get("approach_a_score")
         approach_b = p5.get("approach_b_score")
         anomaly = p6.get("anomaly_score")
+        risk_reasons = p5.get("risk_reasons", "")
 
-        # Determine risk level based on Project Design rules:
-        # Candidate Bands:
-        # Low: [0, 30)
-        # Medium: [30, 50)
-        # High: [50, 70)
-        # Critical: [70, 100]
-        # Primary reference is Approach B (calibrated rule-based 0-100 score) or Approach A
+        # Fallback to dynamic evaluation for live records not in precomputed CSV
+        if (approach_b is None and approach_a is None) and record is not None:
+            reasons_list = []
+            pts = 0.0
+            try:
+                amt = float(record.get("TransactionAmount") or record.get("transaction_amount", 0.0))
+            except (ValueError, TypeError):
+                amt = 0.0
+
+            if amt >= 589.54:
+                pts += 20.0
+                reasons_list.append("High transaction amount (>= $589.54)")
+
+            try:
+                login_attempts = int(record.get("LoginAttempts") or record.get("login_attempts", 0))
+                if login_attempts >= 3:
+                    pts += 15.0
+                    reasons_list.append(f"Multiple failed login attempts ({login_attempts})")
+            except (ValueError, TypeError):
+                pass
+
+            approach_b = min(100.0, pts)
+            risk_reasons = "; ".join(reasons_list)
+
         score_val = approach_b if approach_b is not None else approach_a
 
         if score_val is not None:
@@ -118,18 +136,22 @@ class ScoringService:
             "merchant_cluster_accounts": p5.get("merchant_cluster_accounts", 0),
             "rapid_velocity_count_24h": p5.get("rapid_velocity_count_24h", 0),
             "account_network_sprawl_degree": p5.get("account_network_sprawl_degree", 0),
-            "risk_reasons": p5.get("risk_reasons", ""),
+            "risk_reasons": risk_reasons,
             "approach_a_prominent_factors": p5.get("approach_a_prominent_factors", ""),
             "risk_level": risk_level,
             "is_flagged": is_flagged,
         }
 
     def check_ml_artifacts_status(self) -> Dict[str, Any]:
+        checkpoint_ok = C2GAT_MODEL_PT.exists() and C2GAT_MODEL_PT.stat().st_size > 0
+        scaler_ok = C2GAT_SCALER_PKL.exists() and C2GAT_SCALER_PKL.stat().st_size > 0
+        scores_ok = C2GAT_SCORES_CSV.exists() and len(self.phase6_data) > 0
         return {
-            "model_checkpoint_present": C2GAT_MODEL_PT.exists(),
-            "scaler_present": C2GAT_SCALER_PKL.exists(),
-            "scores_present": C2GAT_SCORES_CSV.exists(),
+            "model_checkpoint_present": checkpoint_ok,
+            "scaler_present": scaler_ok,
+            "scores_present": scores_ok,
             "scores_loaded_count": len(self.phase6_data),
+            "inference_ready": checkpoint_ok and scaler_ok,
         }
 
     def compute_model_comparison(self) -> Dict[str, Any]:

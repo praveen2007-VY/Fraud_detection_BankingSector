@@ -144,6 +144,7 @@ export interface HealthResponse {
   dependencies: {
     neo4j: DependencyStatus;
     kafka: DependencyStatus;
+    flink?: DependencyStatus;
     ml_artifacts: DependencyStatus;
   };
 }

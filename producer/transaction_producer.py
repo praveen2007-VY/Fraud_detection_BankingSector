@@ -48,35 +48,21 @@ def run_producer(
     data_file: str = DATA_FILE,
     offset: int = 0,
     limit: Optional[int] = None,
-    delay: float = 0.001,
+    delay: float = 0.5,
+    loop: bool = False,
+    live_timestamp: bool = False,
 ) -> int:
     """
-    Publish clean transaction records to Kafka.
-    Returns the total number of successfully confirmed messages.
+    Publish clean transaction records to Kafka with controlled delay.
+    Supports single-pass or continuous loop replay.
     """
     logger.info("Loading data from: %s", data_file)
     if not os.path.exists(data_file):
         raise FileNotFoundError(f"Data file not found: {data_file}")
 
-    df = pd.read_csv(data_file)
-    total_available = len(df)
+    df_base = pd.read_csv(data_file)
+    total_available = len(df_base)
     logger.info("Total rows in dataset: %d", total_available)
-
-    # Apply offset and limit
-    if offset > 0:
-        df = df.iloc[offset:]
-    if limit is not None and limit > 0:
-        df = df.iloc[:limit]
-
-    records_to_send = len(df)
-    logger.info(
-        "Publishing %d records (offset=%d, limit=%s) to topic '%s' on %s ...",
-        records_to_send,
-        offset,
-        limit if limit is not None else "ALL",
-        topic,
-        broker,
-    )
 
     producer = Producer({
         "bootstrap.servers": broker,
@@ -94,51 +80,91 @@ def run_producer(
         else:
             confirmed[0] += 1
 
-    start_time = time.time()
-    for idx, (_, row) in enumerate(df.iterrows()):
-        record = row.to_dict()
-        tx_id = str(record.get("TransactionID", f"TX_{idx}"))
-        payload = json.dumps(record, default=str)
+    iteration = 0
+    total_published = 0
 
-        producer.produce(
-            topic,
-            key=tx_id,
-            value=payload,
-            callback=delivery_report,
-        )
+    try:
+        while True:
+            iteration += 1
+            df = df_base.copy()
+            if offset > 0:
+                df = df.iloc[offset:]
+            if limit is not None and limit > 0:
+                df = df.iloc[:limit]
 
-        producer.poll(0)
-        if delay > 0:
-            time.sleep(delay)
+            records_to_send = len(df)
+            logger.info(
+                "[Pass %d] Publishing %d records (offset=%d, limit=%s, delay=%.2fs) to topic '%s'...",
+                iteration,
+                records_to_send,
+                offset,
+                limit if limit is not None else "ALL",
+                delay,
+                topic,
+            )
 
-        if (idx + 1) % 500 == 0:
+            start_time = time.time()
+            for idx, (_, row) in enumerate(df.iterrows()):
+                record = row.to_dict()
+                tx_id = str(record.get("TransactionID", f"TX_{idx}"))
+
+                if live_timestamp:
+                    record["TransactionDate"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                payload = json.dumps(record, default=str)
+
+                producer.produce(
+                    topic,
+                    key=tx_id,
+                    value=payload,
+                    callback=delivery_report,
+                )
+                producer.poll(0)
+                total_published += 1
+
+                if delay > 0.05:
+                    logger.info(
+                        "[PRODUCED] TxID: %-10s | Account: %-8s | Amount: $%7.2f | Type: %-6s",
+                        tx_id,
+                        record.get("AccountID", "N/A"),
+                        float(record.get("TransactionAmount", 0.0)),
+                        record.get("TransactionType", "N/A"),
+                    )
+
+                if delay > 0:
+                    time.sleep(delay)
+
+                if (idx + 1) % 100 == 0:
+                    producer.flush(2.0)
+                    logger.info("Flushed %d records in current pass...", idx + 1)
+
             producer.flush(5.0)
-            logger.info("Produced & flushed %d / %d records...", idx + 1, records_to_send)
+            elapsed = time.time() - start_time
+            logger.info("Pass %d complete: %d records in %.2fs (errors: %d)", iteration, records_to_send, elapsed, errors[0])
 
-    producer.flush(15.0)
-    elapsed = time.time() - start_time
-    logger.info(
-        "Finished: %d / %d confirmed in %.2fs (errors: %d)",
-        confirmed[0],
-        records_to_send,
-        elapsed,
-        errors[0],
-    )
+            if not loop:
+                break
+            logger.info("Loop enabled: restarting replay from beginning after 1s...")
+            time.sleep(1.0)
 
-    if errors[0] > 0:
-        raise RuntimeError(f"Encountered {errors[0]} delivery errors while publishing.")
+    except KeyboardInterrupt:
+        logger.info("Producer stream interrupted by user.")
+    finally:
+        producer.flush(5.0)
 
-    return confirmed[0]
+    return total_published
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Clean Kafka Transaction Producer")
+    parser = argparse.ArgumentParser(description="Clean Kafka Transaction Producer with Controlled Replay")
     parser.add_argument("--broker", default=KAFKA_BROKER, help="Kafka broker address")
     parser.add_argument("--topic", default=KAFKA_INPUT_TOPIC, help="Target Kafka topic")
     parser.add_argument("--data-file", default=DATA_FILE, help="Path to clean CSV")
     parser.add_argument("--offset", type=int, default=0, help="Row offset to start producing from")
     parser.add_argument("--limit", type=int, default=None, help="Maximum number of records to produce (None = all)")
-    parser.add_argument("--delay", type=float, default=0.001, help="Delay in seconds between records (default 0.001s)")
+    parser.add_argument("--delay", type=float, default=0.5, help="Delay in seconds between records (default 0.5s)")
+    parser.add_argument("--loop", action="store_true", help="Continuously loop replay")
+    parser.add_argument("--live-timestamp", action="store_true", help="Update TransactionDate to current wall-clock time")
 
     args = parser.parse_args()
     count = run_producer(
@@ -148,6 +174,8 @@ def main():
         offset=args.offset,
         limit=args.limit,
         delay=args.delay,
+        loop=args.loop,
+        live_timestamp=args.live_timestamp,
     )
     print(f"\n[OK] Successfully published {count} transaction records.")
 

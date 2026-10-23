@@ -119,6 +119,7 @@ function Test-PortBinding($port, $name) {
 Test-PortBinding 9092 "Kafka KRaft Broker"
 Test-PortBinding 7687 "Neo4j Bolt Protocol"
 Test-PortBinding 7474 "Neo4j HTTP Browser"
+Test-PortBinding 8081 "Apache Flink MiniCluster"
 Test-PortBinding 8000 "FastAPI Backend API"
 Test-PortBinding 5173 "React Dashboard (Vite)"
 

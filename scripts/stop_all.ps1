@@ -24,6 +24,7 @@ function Stop-PortProcess($port, $name) {
 
 Stop-PortProcess 5173 "React Dashboard (Vite)"
 Stop-PortProcess 8000 "FastAPI Backend Server"
+Stop-PortProcess 8081 "Apache Flink Pipeline"
 Stop-PortProcess 9092 "Apache Kafka Broker"
 Stop-PortProcess 7687 "Neo4j Graph Database"
 

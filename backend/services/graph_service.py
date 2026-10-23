@@ -48,6 +48,111 @@ class GraphService:
             except Exception as e:
                 logger.error("Error closing Neo4j driver: %s", e)
 
+    def ingest_transaction(self, record: Dict[str, Any]) -> bool:
+        """
+        Materialize a live transaction and its entity nodes (Account, Device, IP, Merchant)
+        and topology relationships in Neo4j.
+        """
+        if not self.verify_connectivity():
+            logger.warning("Neo4j driver not connected; skipping transaction ingestion.")
+            return False
+
+        tx_id = str(record.get("TransactionID") or record.get("transaction_id", "")).strip()
+        acct_id = str(record.get("AccountID") or record.get("account_id", "")).strip()
+        if not tx_id or not acct_id:
+            return False
+
+        dev_id = str(record.get("DeviceID") or record.get("device_id", "")).strip()
+        ip_addr = str(record.get("IP Address") or record.get("ip_address", "")).strip()
+        merch_id = str(record.get("MerchantID") or record.get("merchant_id", "")).strip()
+
+        try:
+            amount = float(record.get("TransactionAmount") or record.get("transaction_amount", 0.0))
+        except (ValueError, TypeError):
+            amount = 0.0
+
+        try:
+            cust_age = int(record["CustomerAge"]) if "CustomerAge" in record and record["CustomerAge"] is not None else None
+        except (ValueError, TypeError):
+            cust_age = None
+
+        try:
+            duration = int(record["TransactionDuration"]) if "TransactionDuration" in record and record["TransactionDuration"] is not None else None
+        except (ValueError, TypeError):
+            duration = None
+
+        try:
+            login_att = int(record["LoginAttempts"]) if "LoginAttempts" in record and record["LoginAttempts"] is not None else None
+        except (ValueError, TypeError):
+            login_att = None
+
+        try:
+            acct_bal = float(record["AccountBalance"]) if "AccountBalance" in record and record["AccountBalance"] is not None else None
+        except (ValueError, TypeError):
+            acct_bal = None
+
+        params = {
+            "transaction_id": tx_id,
+            "account_id": acct_id,
+            "device_id": dev_id,
+            "ip_address": ip_addr,
+            "merchant_id": merch_id,
+            "transaction_amount": amount,
+            "transaction_date": str(record.get("TransactionDate") or record.get("transaction_date", "")),
+            "transaction_type": str(record.get("TransactionType") or record.get("transaction_type", "")),
+            "channel": str(record.get("Channel") or record.get("channel", "")),
+            "location": str(record.get("Location") or record.get("location", "")),
+            "customer_occupation": str(record.get("CustomerOccupation") or record.get("customer_occupation", "")),
+            "customer_age": cust_age,
+            "transaction_duration": duration,
+            "login_attempts": login_att,
+            "account_balance": acct_bal,
+            "previous_transaction_date": str(record.get("PreviousTransactionDate") or record.get("previous_transaction_date", "")),
+            "processing_timestamp": str(record.get("processing_timestamp", "")),
+        }
+
+        ingest_cypher = """
+        MERGE (a:Account {account_id: $account_id})
+        ON CREATE SET 
+            a.customer_occupation = $customer_occupation,
+            a.customer_age = $customer_age
+
+        MERGE (d:Device {device_id: $device_id})
+        MERGE (i:IP {ip_address: $ip_address})
+        MERGE (m:Merchant {merchant_id: $merchant_id})
+
+        MERGE (t:Transaction {transaction_id: $transaction_id})
+        ON CREATE SET 
+            t.transaction_amount = $transaction_amount,
+            t.transaction_date = $transaction_date,
+            t.transaction_type = $transaction_type,
+            t.channel = $channel,
+            t.location = $location,
+            t.transaction_duration = $transaction_duration,
+            t.login_attempts = $login_attempts,
+            t.account_balance = $account_balance,
+            t.customer_age = $customer_age,
+            t.customer_occupation = $customer_occupation,
+            t.previous_transaction_date = $previous_transaction_date,
+            t.processing_timestamp = $processing_timestamp
+
+        MERGE (a)-[:PERFORMED]->(t)
+        MERGE (t)-[:USED_DEVICE]->(d)
+        MERGE (t)-[:ORIGINATED_FROM]->(i)
+        MERGE (t)-[:PAID_TO]->(m)
+        MERGE (a)-[:ACCESSED_VIA]->(d)
+        MERGE (a)-[:CONNECTED_FROM]->(i)
+        """
+
+        try:
+            with self.driver.session() as session:
+                session.run(ingest_cypher, params)
+            logger.info("Successfully ingested transaction %s into Neo4j graph topology", tx_id)
+            return True
+        except Exception as e:
+            logger.error("Failed to ingest transaction %s into Neo4j: %s", tx_id, e)
+            return False
+
     def get_account_subgraph(self, account_id: str, limit_tx: int = 15) -> AccountGraphResponse:
         """
         Retrieves a bounded subgraph around an Account node:

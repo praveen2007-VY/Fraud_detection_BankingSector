@@ -24,10 +24,15 @@ export const App: React.FC = () => {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [health, setHealth] = useState<HealthResponse | null>(null);
 
-  // Live WebSocket state
+  // Live WebSocket state & event telemetry
   const [liveTransactions, setLiveTransactions] = useState<TransactionSummary[]>([]);
   const [wsStatus, setWsStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [lastEventTime, setLastEventTime] = useState<Date | null>(null);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Track seen IDs to prevent double counting
+  const seenTxIdsRef = useRef<Set<string>>(new Set());
+  const seenAccountsRef = useRef<Set<string>>(new Set());
 
   // Inspector & Graph navigation state
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
@@ -46,9 +51,25 @@ export const App: React.FC = () => {
         api.getAlerts(100).catch(() => ({ items: [], total: 0 })),
       ]);
       if (healthData) setHealth(healthData);
-      if (statsData) setStats(statsData);
+      if (statsData) {
+        setStats((prev) => {
+          if (!prev) return statsData;
+          // Keep highest transaction count to avoid rolling backward
+          if (statsData.total_transactions >= prev.total_transactions) {
+            return statsData;
+          }
+          return prev;
+        });
+      }
       if (distData) setDistribution(distData);
-      if (alertsData) setAlerts(alertsData.items);
+      if (alertsData && alertsData.items.length > 0) {
+        setAlerts((prev) => {
+          if (prev.length === 0) return alertsData.items;
+          const existingIds = new Set(prev.map((a) => a.transaction_id));
+          const newItems = alertsData.items.filter((a) => !existingIds.has(a.transaction_id));
+          return [...prev, ...newItems];
+        });
+      }
     } catch (e) {
       console.error('Error loading dashboard telemetry:', e);
     } finally {
@@ -87,13 +108,16 @@ export const App: React.FC = () => {
                 is_live: true,
               };
 
+              // Mark timestamp of last received live event
+              setLastEventTime(new Date());
+
+              // Append to real-time live feed (most recent first)
               setLiveTransactions((prev) => {
-                // Deduplicate by transaction_id
                 const filtered = prev.filter((t) => t.transaction_id !== newTx.transaction_id);
                 return [newTx, ...filtered].slice(0, 100);
               });
 
-              // If flagged, append to alerts queue
+              // If flagged, append or update in alerts queue
               if (newTx.is_flagged) {
                 const newAlert: AlertItem = {
                   alert_id: `ALT-${newTx.transaction_id}`,
@@ -112,19 +136,59 @@ export const App: React.FC = () => {
                   anomaly_score: newTx.anomaly_score,
                   reasons: newTx.risk_reasons ? newTx.risk_reasons.split(';') : ['Real-time streaming threshold trigger'],
                 };
-                setAlerts((prev) => [newAlert, ...prev]);
+                setAlerts((prev) => {
+                  const filtered = prev.filter((a) => a.transaction_id !== newTx.transaction_id);
+                  return [newAlert, ...filtered].slice(0, 100);
+                });
               }
 
-              // Update stats counter
-              setStats((prev) => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  total_transactions: prev.total_transactions + 1,
-                  total_volume: prev.total_volume + newTx.transaction_amount,
-                  flagged_count: newTx.is_flagged ? prev.flagged_count + 1 : prev.flagged_count,
-                };
-              });
+              const isNewTx = !seenTxIdsRef.current.has(newTx.transaction_id);
+              seenTxIdsRef.current.add(newTx.transaction_id);
+              const isNewAccount = newTx.account_id ? !seenAccountsRef.current.has(newTx.account_id) : false;
+              if (newTx.account_id) seenAccountsRef.current.add(newTx.account_id);
+
+              // Update stats counter dynamically
+              if (isNewTx) {
+                setStats((prev) => {
+                  if (!prev) return prev;
+                  const newTotal = prev.total_transactions + 1;
+                  const newVolume = Math.round((prev.total_volume + newTx.transaction_amount) * 100) / 100;
+                  const newFlagged = newTx.is_flagged ? prev.flagged_count + 1 : prev.flagged_count;
+                  const newPct = Math.round((newFlagged / newTotal) * 10000) / 100;
+                  const lowCount = newTx.risk_level === 'low' ? prev.low_risk_count + 1 : prev.low_risk_count;
+                  const medCount = newTx.risk_level === 'medium' ? prev.medium_risk_count + 1 : prev.medium_risk_count;
+                  const highCount = newTx.risk_level === 'high' ? prev.high_risk_count + 1 : prev.high_risk_count;
+                  const critCount = newTx.risk_level === 'critical' ? prev.critical_risk_count + 1 : prev.critical_risk_count;
+                  const newUniqueAccounts = isNewAccount ? prev.unique_accounts + 1 : prev.unique_accounts;
+                  return {
+                    ...prev,
+                    total_transactions: newTotal,
+                    total_volume: newVolume,
+                    flagged_count: newFlagged,
+                    flagged_percentage: newPct,
+                    unique_accounts: newUniqueAccounts,
+                    low_risk_count: lowCount,
+                    medium_risk_count: medCount,
+                    high_risk_count: highCount,
+                    critical_risk_count: critCount,
+                  };
+                });
+
+                // Update risk distribution dynamically
+                setDistribution((prev) => {
+                  if (!prev) return prev;
+                  const level = newTx.risk_level || 'low';
+                  const prevB = prev.approach_b || { low: 79, medium: 1605, high: 724, critical: 104 };
+                  return {
+                    ...prev,
+                    total: prev.total + 1,
+                    approach_b: {
+                      ...prevB,
+                      [level]: (prevB[level] || 0) + 1,
+                    },
+                  };
+                });
+              }
             }
           } catch (err) {
             console.error('[WS] Failed to parse event payload:', err);
@@ -169,6 +233,7 @@ export const App: React.FC = () => {
       <Navbar
         health={health}
         wsStatus={wsStatus}
+        lastEventTime={lastEventTime}
         onRefresh={loadData}
         isRefreshing={isRefreshing}
       />
@@ -191,6 +256,8 @@ export const App: React.FC = () => {
                 distribution={distribution}
                 recentAlerts={alerts}
                 health={health}
+                liveTransactions={liveTransactions}
+                lastEventTime={lastEventTime}
                 onSelectTransaction={setSelectedTxId}
                 onNavigateToTab={setCurrentTab}
                 wsStatus={wsStatus}
@@ -202,6 +269,7 @@ export const App: React.FC = () => {
             {currentTab === 'transactions' && (
               <LiveTransactions
                 liveTransactions={liveTransactions}
+                lastEventTime={lastEventTime}
                 onSelectTransaction={setSelectedTxId}
                 wsStatus={wsStatus}
               />

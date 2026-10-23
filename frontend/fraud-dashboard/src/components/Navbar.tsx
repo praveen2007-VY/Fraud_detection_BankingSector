@@ -5,6 +5,7 @@ import { HealthResponse } from '../types';
 interface NavbarProps {
   health: HealthResponse | null;
   wsStatus: 'connected' | 'connecting' | 'disconnected';
+  lastEventTime?: Date | null;
   onRefresh: () => void;
   isRefreshing: boolean;
 }
@@ -12,15 +13,18 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   health,
   wsStatus,
+  lastEventTime,
   onRefresh,
   isRefreshing,
 }) => {
   const [timeStr, setTimeStr] = useState<string>('');
+  const [nowTs, setNowTs] = useState<number>(Date.now());
 
   useEffect(() => {
     const update = () => {
       const now = new Date();
       setTimeStr(now.toUTCString().slice(17, 25) + ' UTC');
+      setNowTs(Date.now());
     };
     update();
     const interval = setInterval(update, 1000);
@@ -28,8 +32,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   }, []);
 
   const kafkaHealthy = health?.dependencies?.kafka?.status === 'healthy';
+  const flinkHealthy = health?.dependencies?.flink?.status === 'healthy';
   const neo4jHealthy = health?.dependencies?.neo4j?.status === 'healthy';
   const mlHealthy = health?.dependencies?.ml_artifacts?.status === 'healthy';
+
+  const isStreamingLive = wsStatus === 'connected' && lastEventTime && (nowTs - lastEventTime.getTime() < 15000);
+  const lastEventSeconds = lastEventTime ? Math.max(0, Math.round((nowTs - lastEventTime.getTime()) / 1000)) : null;
 
   return (
     <header className="h-16 bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs">
@@ -54,17 +62,34 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Status Pills */}
         <div className="hidden lg:flex items-center gap-2 text-xs">
           {/* WebSocket stream status */}
-          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80">
+          <div
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80 cursor-default"
+            title={lastEventSeconds !== null ? `Last event received ${lastEventSeconds}s ago` : 'Awaiting producer event stream'}
+          >
             <Radio className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-slate-500 font-medium">Stream:</span>
             <span className="flex items-center gap-1 font-bold">
               <span
                 className={`status-pulse ${
-                  wsStatus === 'connected' ? 'online' : wsStatus === 'connecting' ? 'degraded' : 'offline'
+                  wsStatus !== 'connected' ? 'offline' : isStreamingLive ? 'online' : 'degraded'
                 }`}
               />
-              <span className={wsStatus === 'connected' ? 'text-[#05C168]' : 'text-amber-500'}>
-                {wsStatus === 'connected' ? 'LIVE' : wsStatus.toUpperCase()}
+              <span
+                className={
+                  wsStatus !== 'connected'
+                    ? 'text-rose-500'
+                    : isStreamingLive
+                    ? 'text-[#05C168]'
+                    : 'text-amber-500'
+                }
+              >
+                {wsStatus !== 'connected'
+                  ? wsStatus.toUpperCase()
+                  : isStreamingLive
+                  ? 'STREAMING'
+                  : lastEventSeconds !== null
+                  ? `IDLE (${lastEventSeconds}s)`
+                  : 'IDLE'}
               </span>
             </span>
           </div>
@@ -77,6 +102,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className={`status-pulse ${kafkaHealthy ? 'online' : 'offline'}`} />
               <span className={kafkaHealthy ? 'text-[#05C168]' : 'text-rose-500'}>
                 {kafkaHealthy ? 'READY' : 'OFFLINE'}
+              </span>
+            </span>
+          </div>
+
+          {/* Flink status */}
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-50 border border-slate-200/80">
+            <RefreshCw className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-slate-500 font-medium">Flink:</span>
+            <span className="flex items-center gap-1 font-bold">
+              <span className={`status-pulse ${flinkHealthy ? 'online' : 'degraded'}`} />
+              <span className={flinkHealthy ? 'text-[#05C168]' : 'text-amber-500'}>
+                {flinkHealthy ? 'READY' : 'OFFLINE'}
               </span>
             </span>
           </div>
@@ -100,7 +137,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="flex items-center gap-1 font-bold">
               <span className={`status-pulse ${mlHealthy ? 'online' : 'degraded'}`} />
               <span className={mlHealthy ? 'text-[#05C168]' : 'text-amber-500'}>
-                {mlHealthy ? 'ACTIVE' : 'CHECK'}
+                {mlHealthy ? 'ACTIVE' : 'OFFLINE'}
               </span>
             </span>
           </div>
